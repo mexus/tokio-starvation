@@ -1,0 +1,20 @@
+[package]
+name = "tokio-starvation"
+version = "0.1.0"
+authors = ["mexus <gilaldpellaeon@gmail.com>"]
+autobins = false
+
+[dependencies]
+byteorder = "1.2.7"
+rand = "0.6.1"
+rand_chacha = "0.1.0"
+structopt = "0.2.13"
+tokio = "0.1.13"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
