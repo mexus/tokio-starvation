@@ -1,4 +1,6 @@
 extern crate byteorder;
+extern crate rand;
+extern crate rand_chacha;
 extern crate tokio;
 
 use byteorder::{ByteOrder, BE};
@@ -6,7 +8,11 @@ use std::io;
 use tokio::io::{read_exact, write_all};
 use tokio::prelude::*;
 
-pub fn read_packet<S: AsyncRead>(
+pub mod client;
+pub mod server;
+pub mod yielding;
+
+pub(crate) fn read_packet<S: AsyncRead>(
     stream: S,
     mut buf: Vec<u8>,
 ) -> impl Future<Item = (S, Vec<u8>), Error = io::Error> {
@@ -18,7 +24,7 @@ pub fn read_packet<S: AsyncRead>(
     })
 }
 
-pub fn write_packet<S: AsyncWrite>(
+pub(crate) fn write_packet<S: AsyncWrite>(
     stream: S,
     buf: Vec<u8>,
 ) -> impl Future<Item = (S, Vec<u8>), Error = io::Error> {

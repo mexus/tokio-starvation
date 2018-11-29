@@ -1,22 +1,12 @@
-extern crate byteorder;
-extern crate structopt;
-extern crate tokio;
-extern crate tokio_starvation;
-
 use byteorder::{ByteOrder, BE};
 use future::{loop_fn, Loop};
 use std::io;
 use std::net::SocketAddr;
-use structopt::StructOpt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
-use tokio::runtime::current_thread;
-use tokio_starvation::{read_packet, write_packet};
-
-#[derive(StructOpt)]
-struct Opts {
-    listen_addr: SocketAddr,
-}
+use tokio::runtime::current_thread::Runtime;
+use {read_packet, yielding::Yielding};
 
 fn calculate(mut data: Vec<u8>) -> Vec<u8> {
     let sum: u64 = data.iter().map(|v| u64::from(*v)).sum();
@@ -26,27 +16,35 @@ fn calculate(mut data: Vec<u8>) -> Vec<u8> {
     data
 }
 
-fn process_client(s: TcpStream) -> impl Future<Item = (), Error = io::Error> {
+fn process_client(s: TcpStream, id: usize) -> impl Future<Item = (), Error = io::Error> {
     let buf = Vec::new();
     loop_fn((s, buf), move |(stream, buf)| {
-        read_packet(stream, buf)
-            .map(|(stream, buf)| (stream, calculate(buf)))
-            .and_then(|(stream, buf)| write_packet(stream, buf))
+        Yielding::new(read_packet(stream, buf))
+            .map(move |(stream, buf)| {
+                let buf = calculate(buf);
+                println!("[server] Got buffer from client #{}, crc = {:x?}", id, buf);
+                (stream, buf)
+            })
             .map(Loop::Continue::<(), _>)
     })
 }
 
-fn main() -> io::Result<()> {
-    let opts = Opts::from_args();
-    let mut rt = current_thread::Runtime::new()?;
-    let f = TcpListener::bind(&opts.listen_addr)?
+pub fn run(addr: &SocketAddr, rt: &mut Runtime) -> io::Result<()> {
+    let id = AtomicUsize::new(0);
+    let handle = rt.handle();
+    let f = TcpListener::bind(&addr)?
         .incoming()
-        .for_each(|stream| {
-            tokio::spawn(process_client(stream).map_err(|e| eprintln!("{:?}", e)));
+        .for_each(move |stream| {
+            let id = id.fetch_add(1, Ordering::Relaxed);
+            handle
+                .spawn(
+                    process_client(stream, id)
+                        .map_err(move |e| eprintln!("Error on client #{}: {:?}", id, e)),
+                )
+                .unwrap();
             Ok(())
         })
         .map_err(|e| eprintln!("{:?}", e));
     rt.spawn(f);
-    rt.run().unwrap();
     Ok(())
 }
