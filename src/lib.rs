@@ -1,8 +1,3 @@
-extern crate byteorder;
-extern crate rand;
-extern crate rand_chacha;
-extern crate tokio;
-
 use byteorder::{ByteOrder, BE};
 use std::io;
 use tokio::io::{read_exact, write_all};

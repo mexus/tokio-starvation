@@ -1,11 +1,13 @@
 use super::write_packet;
-use future::{loop_fn, Executor, Loop};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tokio::prelude::*;
+use tokio::prelude::{
+    future::{loop_fn, Executor, Loop},
+    *,
+};
 
 fn generate(rnd: &mut impl Rng, mut buf: Vec<u8>) -> Vec<u8> {
     let len: u16 = rnd.gen();
@@ -20,7 +22,7 @@ fn process<R: Rng>(
     let gen = generate(&mut rnd, buf);
     write_packet(stream, gen)
         .map(|(stream, buf)| {
-            println!("[client] send {} bytes", buf.len());
+            println!("[client] sent {} bytes", buf.len());
             (stream, rnd, buf)
         })
         .map(Loop::Continue::<(), _>)
@@ -35,7 +37,7 @@ pub fn run<E: Executor<Box<Future<Item = (), Error = ()> + Send + Sync>>>(
 
     let f = TcpStream::connect(&addr)
         .and_then(|stream| loop_fn((stream, rnd, buf), process))
-        .map_err(|e| eprintln!("{:?}", e));
+        .map_err(|e| eprintln!("[client] error {:?}", e));
     rt.execute(Box::new(f)).unwrap();
     Ok(())
 }

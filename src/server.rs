@@ -1,12 +1,14 @@
+use crate::{read_packet, yielding::Yielding};
 use byteorder::{ByteOrder, BE};
-use future::{loop_fn, Loop};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::*;
+use tokio::prelude::{
+    future::{loop_fn, Loop},
+    *,
+};
 use tokio::runtime::current_thread::Runtime;
-use {read_packet, yielding::Yielding};
 
 fn calculate(mut data: Vec<u8>) -> Vec<u8> {
     let sum: u64 = data.iter().map(|v| u64::from(*v)).sum();
@@ -16,9 +18,12 @@ fn calculate(mut data: Vec<u8>) -> Vec<u8> {
     data
 }
 
-fn process_client(s: TcpStream, id: usize) -> impl Future<Item = (), Error = io::Error> {
+fn process_client_yield(
+    s: TcpStream,
+    id: usize,
+) -> Box<Future<Item = (), Error = io::Error> + Send> {
     let buf = Vec::new();
-    loop_fn((s, buf), move |(stream, buf)| {
+    Box::new(loop_fn((s, buf), move |(stream, buf)| {
         Yielding::new(read_packet(stream, buf))
             .map(move |(stream, buf)| {
                 let buf = calculate(buf);
@@ -26,25 +31,48 @@ fn process_client(s: TcpStream, id: usize) -> impl Future<Item = (), Error = io:
                 (stream, buf)
             })
             .map(Loop::Continue::<(), _>)
-    })
+    }))
 }
 
-pub fn run(addr: &SocketAddr, rt: &mut Runtime) -> io::Result<()> {
+fn process_client_no_yield(
+    s: TcpStream,
+    id: usize,
+) -> Box<Future<Item = (), Error = io::Error> + Send> {
+    let buf = Vec::new();
+    Box::new(loop_fn((s, buf), move |(stream, buf)| {
+        read_packet(stream, buf)
+            .map(move |(stream, buf)| {
+                let buf = calculate(buf);
+                println!("[server] Got buffer from client #{}, crc = {:x?}", id, buf);
+                (stream, buf)
+            })
+            .map(Loop::Continue::<(), _>)
+    }))
+}
+
+pub fn run(addr: &SocketAddr, rt: &mut Runtime, should_yield: bool) -> io::Result<SocketAddr> {
+    let processor: Box<dyn Fn(_, _) -> _> = if should_yield {
+        Box::new(process_client_yield)
+    } else {
+        Box::new(process_client_no_yield)
+    };
+    let listener = TcpListener::bind(&addr)?;
+    let addr = listener.local_addr()?;
     let id = AtomicUsize::new(0);
     let handle = rt.handle();
-    let f = TcpListener::bind(&addr)?
+    let f = listener
         .incoming()
         .for_each(move |stream| {
             let id = id.fetch_add(1, Ordering::Relaxed);
             handle
                 .spawn(
-                    process_client(stream, id)
-                        .map_err(move |e| eprintln!("Error on client #{}: {:?}", id, e)),
+                    processor(stream, id)
+                        .map_err(move |e| eprintln!("[server] error on client #{}: {:?}", id, e)),
                 )
                 .unwrap();
             Ok(())
         })
-        .map_err(|e| eprintln!("{:?}", e));
+        .map_err(|e| eprintln!("[server] error: {:?}", e));
     rt.spawn(f);
-    Ok(())
+    Ok(addr)
 }

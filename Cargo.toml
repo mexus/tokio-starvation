@@ -2,6 +2,7 @@
 name = "tokio-starvation"
 version = "0.1.0"
 authors = ["mexus <gilaldpellaeon@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 byteorder = "1.2.7"
